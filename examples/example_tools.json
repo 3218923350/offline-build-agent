@@ -1,0 +1,15 @@
+[
+  {
+    "tool_name": "numpy-example",
+    "tool_id": "example_001",
+    "dockerfile": "FROM ubuntu:20.04\n\nRUN apt-get update && apt-get install -y \\\n    python3 \\\n    python3-pip \\\n    python3-dev \\\n    gcc \\\n    g++ \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install numpy==1.24.0",
+    "usage_entry_command": "python3 -c 'import numpy; print(numpy.__version__)'"
+  },
+  {
+    "tool_name": "simsimd-example",
+    "tool_id": "example_002",
+    "dockerfile": "FROM ubuntu:20.04\n\nRUN apt-get update && apt-get install -y \\\n    python3 \\\n    python3-pip \\\n    python3-dev \\\n    gcc \\\n    g++ \\\n    cmake \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install simsimd",
+    "usage_entry_command": "python3 -c 'import simsimd; print(simsimd.__version__)'"
+  }
+]
+
