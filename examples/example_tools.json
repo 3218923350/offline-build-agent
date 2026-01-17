@@ -1,15 +1,32 @@
 [
   {
-    "tool_name": "numpy-example",
-    "tool_id": "example_001",
-    "dockerfile": "FROM ubuntu:20.04\n\nRUN apt-get update && apt-get install -y \\\n    python3 \\\n    python3-pip \\\n    python3-dev \\\n    gcc \\\n    g++ \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install numpy==1.24.0",
-    "usage_entry_command": "python3 -c 'import numpy; print(numpy.__version__)'"
+    "tool_name": "SimSIMD",
+    "tool_id": "1",
+    "dockerfile": "FROM python:3.10-slim\n\n# Install system dependencies\nRUN apt-get update && apt-get install -y \\\n    curl \\\n    unzip \\\n    supervisor \\\n    net-tools \\\n    openssh-server \\\n    wget \\\n    build-essential \\\n    gcc \\\n    g++ \\\n    make \\\n    libssl-dev \\\n    zlib1g-dev \\\n    libbz2-dev \\\n    libreadline-dev \\\n    libsqlite3-dev \\\n    libffi-dev \\\n    liblzma-dev \\\n    tk-dev \\\n    uuid-dev \\\n    --no-install-recommends && \\\n    rm -rf /var/lib/apt/lists/*\n\n# Configure Supervisor\nRUN cat > /etc/supervisord.conf << 'EOF'\n[supervisord]\nnodaemon=true\nlogfile=/var/log/supervisor/supervisord.log\npidfile=/var/run/supervisord.log\n[program:sshd]\ncommand=/usr/sbin/sshd -D\nEOF\n\n# Configure SSH\nRUN cat >> /etc/ssh/sshd_config << 'EOF'\nClientAliveInterval 60\nClientAliveCountMax 3\nEOF\n\nRUN mkdir -p /var/run/sshd && \\\n    mkdir -p /var/log/supervisor && \\\n    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config && \\\n    sed -i 's/UsePAM yes/UsePAM no/g' /etc/ssh/sshd_config\n\n# Python dependencies\nRUN pip install --no-cache-dir numpy mcp simsimd\n",
+    "usage_entry_command": "python -c \"import simsimd; print('SimSIMD version:', simsimd.__version__); print('Capabilities:', simsimd.get_capabilities())\""
   },
   {
-    "tool_name": "simsimd-example",
-    "tool_id": "example_002",
-    "dockerfile": "FROM ubuntu:20.04\n\nRUN apt-get update && apt-get install -y \\\n    python3 \\\n    python3-pip \\\n    python3-dev \\\n    gcc \\\n    g++ \\\n    cmake \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install simsimd",
-    "usage_entry_command": "python3 -c 'import simsimd; print(simsimd.__version__)'"
+    "tool_name": "Kinematic-Calibration",
+    "tool_id": "2",
+    "dockerfile": "FROM python:3.11-slim\n\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && apt-get install -y \\\n    gcc \\\n    g++ \\\n    make \\\n    libgl1 \\\n    libglib2.0-0 \\\n    libsm6 \\\n    libxext6 \\\n    libxrender1 \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip install numpy scipy matplotlib opencv-python\n",
+    "usage_entry_command": "python -c \"import numpy; print(numpy.__version__)\""
+  },
+  {
+    "tool_name": "otrobopt",
+    "tool_id": "3",
+    "dockerfile": "FROM python:3.10-slim\n\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && apt-get install -y \\\n    gcc \\\n    g++ \\\n    make \\\n    cmake \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip install openturns otrobopt numpy\n",
+    "usage_entry_command": "python -c \"import openturns, otrobopt, numpy as np; print('ok')\""
+  },
+  {
+    "tool_name": "ElmerFEM-OpenFOAM-Dakota",
+    "tool_id": "4",
+    "dockerfile": "FROM ubuntu:22.04\n\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && apt-get install -y \\\n    python3 \\\n    python3-pip \\\n    supervisor \\\n    net-tools \\\n    openssh-server \\\n    gcc \\\n    g++ \\\n    make \\\n    wget \\\n    curl \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install numpy mcp\n",
+    "usage_entry_command": "which sshd && python3 -c \"import numpy, mcp; print('ok')\""
+  },
+  {
+    "tool_name": "LBFGSpp",
+    "tool_id": "5",
+    "dockerfile": "FROM ubuntu:22.04\nENV DEBIAN_FRONTEND=noninteractive\n\nRUN apt-get update && apt-get install -y \\\n    python3 \\\n    python3-pip \\\n    gcc \\\n    g++ \\\n    make \\\n    cmake \\\n    && rm -rf /var/lib/apt/lists/*\n\nRUN pip3 install numpy mcp\n",
+    "usage_entry_command": "python3 -c \"import numpy, mcp; print('numpy', numpy.__version__)\""
   }
 ]
-
