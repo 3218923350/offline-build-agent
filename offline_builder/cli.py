@@ -87,8 +87,13 @@ def generate_final_report(output_dir: Path):
         f.write("\n" + "="*80 + "\n")
         f.write("## 统计摘要\n\n")
         f.write(f"总工具数: {total}\n")
-        f.write(f"成功: {success} ({success/total*100:.1f}%)\n")
-        f.write(f"失败: {total - success} ({(total-success)/total*100:.1f}%)\n\n")
+        if total > 0:
+            f.write(f"成功: {success} ({success/total*100:.1f}%)\n")
+            f.write(f"失败: {total - success} ({(total-success)/total*100:.1f}%)\n\n")
+        else:
+            f.write("成功: 0\n")
+            f.write("失败: 0\n")
+            f.write("注意: 没有找到任何工具结果\n\n")
         f.write("失败原因分布:\n")
         for ftype, count in failure_by_type.items():
             if count > 0:
@@ -96,8 +101,13 @@ def generate_final_report(output_dir: Path):
     
     print(f"\n最终报告已生成: {report_path}")
     print(f"总工具数: {total}")
-    print(f"成功: {success} ({success/total*100:.1f}%)" if total > 0 else "成功: 0")
-    print(f"失败: {total - success}")
+    if total > 0:
+        print(f"成功: {success} ({success/total*100:.1f}%)")
+        print(f"失败: {total - success} ({(total-success)/total*100:.1f}%)")
+    else:
+        print("成功: 0")
+        print("失败: 0")
+        print("注意: 没有找到任何工具结果，可能所有任务都被中断或未完成")
 
 
 def main(argv: Optional[List[str]] = None):

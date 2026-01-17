@@ -44,20 +44,55 @@ def execute_shell_script(
     script_path.write_text(script_content, encoding="utf-8")
     script_path.chmod(0o755)
     
+    # 确保使用绝对路径
+    script_path_abs = script_path.resolve()
+    work_dir_abs = work_dir.resolve()
+    
+    # 验证文件确实存在
+    if not script_path_abs.exists():
+        return ExecutionResult(
+            stage=script_name,
+            success=False,
+            stdout="",
+            stderr="",
+            exit_code=-1,
+            error_message=f"脚本文件不存在: {script_path_abs}",
+        )
+    
+    # 验证文件可执行
+    if not os.access(script_path_abs, os.X_OK):
+        return ExecutionResult(
+            stage=script_name,
+            success=False,
+            stdout="",
+            stderr="",
+            exit_code=-1,
+            error_message=f"脚本文件不可执行: {script_path_abs}",
+        )
+    
     if use_netns:
         # 进入无网环境: ip netns exec offline bash -c "ip link set lo up && bash script.sh"
         cmd = [
             "ip", "netns", "exec", "offline",
             "bash", "-c",
-            f"ip link set lo up && cd {work_dir} && bash {script_name}"
+            f"ip link set lo up && cd {work_dir_abs} && bash {script_name}"
         ]
     else:
-        cmd = ["bash", str(script_path)]
+        # 使用绝对路径执行脚本
+        cmd = ["bash", str(script_path_abs)]
+    
+    # 调试信息：打印实际执行的命令和路径
+    print(f"  [调试] 执行命令: {' '.join(cmd)}")
+    print(f"  [调试] 工作目录: {work_dir_abs}")
+    print(f"  [调试] 脚本路径: {script_path_abs}")
+    print(f"  [调试] 脚本存在: {script_path_abs.exists()}")
+    print(f"  [调试] 脚本可执行: {os.access(script_path_abs, os.X_OK)}")
     
     try:
+        # 确保工作目录是绝对路径
         result = subprocess.run(
             cmd,
-            cwd=work_dir,
+            cwd=str(work_dir_abs),
             capture_output=True,
             text=True,
             timeout=timeout,
