@@ -63,12 +63,27 @@ def execute_shell_script(
             timeout=timeout,
         )
         
+        # 如果执行失败，从 stderr 或 stdout 中提取错误信息
+        error_message = ""
+        if result.returncode != 0:
+            # 优先使用 stderr，如果 stderr 为空则使用 stdout 的最后几行
+            if result.stderr and result.stderr.strip():
+                # 取 stderr 的最后500字符，避免太长
+                error_message = result.stderr.strip()[-3000:] if len(result.stderr) > 3000 else result.stderr.strip()
+            elif result.stdout and result.stdout.strip():
+                # 如果 stderr 为空，从 stdout 中提取最后几行
+                lines = result.stdout.strip().split('\n')
+                error_message = '\n'.join(lines[-100:])  # 取最后10行
+            else:
+                error_message = f"脚本执行失败，退出码: {result.returncode}"
+        
         return ExecutionResult(
             stage=script_name,
             success=result.returncode == 0,
             stdout=result.stdout,
             stderr=result.stderr,
             exit_code=result.returncode,
+            error_message=error_message,
         )
     except subprocess.TimeoutExpired as e:
         return ExecutionResult(
@@ -284,8 +299,21 @@ def build_tool_offline(
         execution_history.append(online_result)
         
         if not online_result.success:
-            print(f"  ❌ Online 脚本执行失败: {online_result.error_message}")
-            failure_log = f"Online阶段失败:\nSTDOUT:\n{online_result.stdout}\nSTDERR:\n{online_result.stderr}"
+            # 构建详细的错误信息
+            error_info = online_result.error_message or "未知错误"
+            if online_result.exit_code != -1:
+                error_info = f"退出码: {online_result.exit_code}, {error_info}"
+            
+            print(f"  ❌ Online 脚本执行失败: {error_info}")
+            # 打印 stderr 的最后几行（如果有）
+            if online_result.stderr:
+                stderr_lines = online_result.stderr.strip().split('\n')
+                if stderr_lines:
+                    print(f"  错误输出（最后5行）:")
+                    for line in stderr_lines[-5:]:
+                        print(f"    {line}")
+            
+            failure_log = f"Online阶段失败:\n退出码: {online_result.exit_code}\n错误信息: {error_info}\nSTDOUT:\n{online_result.stdout}\nSTDERR:\n{online_result.stderr}"
             execution_failures.append(failure_log)
             total_attempts += 1
             continue
@@ -304,8 +332,21 @@ def build_tool_offline(
         execution_history.append(offline_result)
         
         if not offline_result.success:
-            print(f"  ❌ Offline 脚本执行失败: {offline_result.error_message}")
-            failure_log = f"Offline阶段失败:\nSTDOUT:\n{offline_result.stdout}\nSTDERR:\n{offline_result.stderr}"
+            # 构建详细的错误信息
+            error_info = offline_result.error_message or "未知错误"
+            if offline_result.exit_code != -1:
+                error_info = f"退出码: {offline_result.exit_code}, {error_info}"
+            
+            print(f"  ❌ Offline 脚本执行失败: {error_info}")
+            # 打印 stderr 的最后几行（如果有）
+            if offline_result.stderr:
+                stderr_lines = offline_result.stderr.strip().split('\n')
+                if stderr_lines:
+                    print(f"  错误输出（最后5行）:")
+                    for line in stderr_lines[-5:]:
+                        print(f"    {line}")
+            
+            failure_log = f"Offline阶段失败:\n退出码: {offline_result.exit_code}\n错误信息: {error_info}\nSTDOUT:\n{offline_result.stdout}\nSTDERR:\n{offline_result.stderr}"
             execution_failures.append(failure_log)
             total_attempts += 1
             continue
@@ -322,8 +363,21 @@ def build_tool_offline(
         execution_history.append(verify_result)
         
         if not verify_result.success:
-            print(f"  ❌ 工具验证失败: {verify_result.error_message}")
-            failure_log = f"验证阶段失败:\nSTDOUT:\n{verify_result.stdout}\nSTDERR:\n{verify_result.stderr}"
+            # 构建详细的错误信息
+            error_info = verify_result.error_message or "未知错误"
+            if verify_result.exit_code != -1:
+                error_info = f"退出码: {verify_result.exit_code}, {error_info}"
+            
+            print(f"  ❌ 工具验证失败: {error_info}")
+            # 打印 stderr 的最后几行（如果有）
+            if verify_result.stderr:
+                stderr_lines = verify_result.stderr.strip().split('\n')
+                if stderr_lines:
+                    print(f"  错误输出（最后5行）:")
+                    for line in stderr_lines[-5:]:
+                        print(f"    {line}")
+            
+            failure_log = f"验证阶段失败:\n退出码: {verify_result.exit_code}\n错误信息: {error_info}\nSTDOUT:\n{verify_result.stdout}\nSTDERR:\n{verify_result.stderr}"
             execution_failures.append(failure_log)
             total_attempts += 1
             continue

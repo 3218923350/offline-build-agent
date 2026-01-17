@@ -24,15 +24,25 @@ def call_llm_json_with_retry(
     last_error = None
     for attempt in range(max_retries):
         try:
-            response = client.chat.completions.create(
+            if model == "mog-1":
+                response = client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.7,
                 response_format={"type": "json_object"},
             )
+            else:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=0.7,
+                    response_format={"type": "json_object"},
+                )
             content = response.choices[0].message.content or "{}"
             return json.loads(content)
         except json.JSONDecodeError as e:
