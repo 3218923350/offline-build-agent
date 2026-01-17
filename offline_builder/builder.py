@@ -141,29 +141,21 @@ def execute_shell_script(
 
 
 def verify_tool(
-    usage_entry_command: str,
+    verify_command: str,
     tool_dir: Path,
     timeout: int = 300,
 ) -> ExecutionResult:
-    """验证工具是否可用"""
-    # 调整验证命令路径（将系统 python 替换为工具的 python）
-    adjusted_cmd = usage_entry_command
+    """
+    验证工具是否可用
     
-    # 如果命令以 python 开头，替换为工具目录下的 python
-    if adjusted_cmd.startswith("python ") or adjusted_cmd == "python":
-        python_paths = [
-            tool_dir / "bin" / "python",
-            tool_dir / "miniforge3" / "bin" / "python",
-            tool_dir / "venv" / "bin" / "python",
-        ]
-        for py_path in python_paths:
-            if py_path.exists():
-                adjusted_cmd = adjusted_cmd.replace("python", str(py_path), 1)
-                break
-    
+    Args:
+        verify_command: 验证命令（应该是已经改写过的命令）
+        tool_dir: 工具目录
+        timeout: 超时时间
+    """
     try:
         result = subprocess.run(
-            adjusted_cmd,
+            verify_command,
             shell=True,
             cwd=tool_dir,
             capture_output=True,
@@ -213,6 +205,18 @@ def write_build_log(log_path: Path, build_result: BuildResult):
             f.write(f"**评审者**: {round.reviewer_name}\n\n")
             f.write(f"**提案者判断**: can_run={round.proposal.can_run}\n")
             f.write(f"**理由**: {round.proposal.reason}\n\n")
+            
+            # 输出副作用分析
+            if round.proposal.side_effects:
+                f.write(f"**识别到的副作用** ({len(round.proposal.side_effects)} 个):\n")
+                for i, effect in enumerate(round.proposal.side_effects, 1):
+                    f.write(f"{i}. {effect.source}: {effect.object}\n")
+                    f.write(f"   - 需要编译: {effect.needs_compile}, ")
+                    f.write(f"CPU探测: {effect.needs_cpu_detect}, ")
+                    f.write(f"可能联网: {effect.may_access_network}\n")
+                f.write("\n")
+            
+            f.write(f"**改写后的验证命令**: `{round.proposal.rewritten_verify_command}`\n\n")
             f.write(f"**Online 脚本**:\n```bash\n{round.proposal.online_script}\n```\n\n")
             f.write(f"**Offline 脚本**:\n```bash\n{round.proposal.offline_script}\n```\n\n")
             f.write(f"**评审者判断**: can_run={round.review_can_run}\n")
@@ -390,8 +394,9 @@ def build_tool_offline(
         
         # Phase 4: 验证工具
         print("\n[验证] 开始验证工具...")
+        print(f"  使用验证命令: {proposal.rewritten_verify_command}")
         verify_result = verify_tool(
-            usage_entry_command=tool_input.usage_entry_command,
+            verify_command=proposal.rewritten_verify_command,
             tool_dir=tool_output_dir,
             timeout=300,
         )

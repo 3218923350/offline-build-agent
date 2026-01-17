@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 from openai import OpenAI
 
-from .models import DebateRound, ScriptProposal
+from .models import DebateRound, ScriptProposal, SideEffect
 
 
 def call_llm_json_with_retry(
@@ -59,198 +59,185 @@ def call_llm_json_with_retry(
 
 def build_proposer_system_prompt() -> str:
     """构建脚本生成者的系统提示词"""
-    return """你是"离线构建脚本生成专家"。
+    return """你是「离线构建脚本生成专家（Offline Build Script Proposer）」。
 
-目标：
-给定一个 Dockerfile，请将其**等价转换**为两个 shell 脚本：
+你的任务不是"想办法安装工具"，
+而是 **把 Dockerfile 中所有"联网副作用"显式前移到 online 阶段并物化**，
+从而保证 offline 阶段在「完全无网络」条件下也能成功运行。
+
+⚠️ 这是一个严格的工程任务，不是概念性讨论。
+
+────────────────────────────────
+【全局目标（不可违反）】
+────────────────────────────────
+你必须生成两个 shell 脚本：
 
 1) 00_fetch_and_build_online.sh
    - 允许联网
-   - 允许 apt / pip / curl / git
-   - 必须完成：
-     • Python 环境安装（如 Dockerfile 中需要）
-     • 所有依赖包下载（包括 C/C++ 扩展）
-     • C/C++ 扩展必须编译成 wheel
-     • 所有资源文件下载
-   - 禁止在 offline 阶段再编译 C 代码
+   - 允许 apt / pip / curl / wget / git
+   - **必须把所有联网副作用"物化"为本地文件**
+   - 允许 C/C++ 编译（但必须产出 wheel / 二进制文件）
 
 2) 01_build_offline.sh
-   - 完全无网络（ip netns exec offline 环境）
-   - 只能使用 online 阶段产物
-   - 禁止 apt / pip download / curl / git / wget
-   - 禁止 CPU 特性自动探测
-   - 禁止触发编译器
+   - 运行在完全无网络环境中（ip netns exec offline）
+   - 禁止 apt / pip download / curl / wget / git
+   - 禁止触发任何编译器（gcc / g++ / cmake / make）
+   - 只能使用 online 阶段生成的本地产物
 
-【硬性工程约束（违反任意一条必须 can_run=false）】
-✓ Python 必须显式路径，不允许使用系统 python（建议用 Miniforge3）
-✓ pip install 必须使用 --no-index + --find-links
-✓ C/C++ 扩展必须在 online 阶段编译成 wheel
-✓ offline 阶段不得触发编译器（gcc/g++/clang）
-✓ 如果工具涉及 SIMD / ISA（如 simsimd）：
-  - 必须在 online 阶段显式禁用不兼容 target
-✓ 环境隔离：每个工具使用独立目录（/root/tools/{tool_name}）
-✓ Python 环境隔离：使用 venv 或独立的 Miniforge3
+如果你无法保证上述条件，必须返回 can_run=false。
 
-【常见经验和最佳实践】
-1. **Python 环境管理**：
-   - 推荐使用 Miniforge3（自带 conda + pip）
-   - 安装路径：/root/tools/{tool_name}/miniforge3
-   - 创建独立 venv：/root/tools/{tool_name}/venv
-   - Python 路径示例：/root/tools/{tool_name}/miniforge3/bin/python
+────────────────────────────────
+【硬性工程不变量（违反任一条 = can_run=false）】
+────────────────────────────────
+✓ Python 必须是"确定性产物"（例如源码编译或已下载的发行版）
+✓ offline 阶段禁止使用系统 python
+✓ offline 阶段 pip install 必须使用 --no-index + --find-links
+✓ 所有 Python C 扩展必须在 online 阶段编译成 wheel
+✓ offline 阶段不得出现任何 C/C++ 编译行为
+✓ 不允许隐式联网（DNS / TLS / metadata / setup.py 下载）
+✓ 不允许 CPU 特性自动探测
+✓ 每个工具使用独立目录（/root/tools/{tool_name}）
 
-2. **依赖下载和安装**：
-   - Online: pip download --dest ./packages {package_name}
-   - Online: pip wheel --wheel-dir ./wheels --no-deps {package_name}
-   - Offline: pip install --no-index --find-links ./packages {package_name}
-   - 注意：必须下载所有传递依赖
+────────────────────────────────
+【你必须遵循的"成功参考模式"（SimSIMD Reference）】
+────────────────────────────────
+下面是一个已经被验证可行的离线构建模式（你必须对齐该模式）：
 
-3. **C/C++ 扩展处理**：
-   - 必须在 online 阶段编译：pip wheel --no-deps numpy
-   - 禁用 SIMD：SIMSIMD_TARGET_X86=0 pip wheel simsimd
-   - 禁用 AVX：CFLAGS="-march=x86-64" pip wheel package_name
-   - 静态链接优先：避免动态库依赖问题
+✔ Online 阶段：
+- 构建独立 Python（不依赖系统 Python）
+- 冻结 pip / setuptools / wheel 版本
+- 对所有 pip install 的包执行：
+  - pip wheel → 生成 wheel 文件
+- 如果包涉及 SIMD / ISA：
+  - 在 online 阶段显式关闭不兼容 target
+- offline 阶段不再编译任何 C/C++ 代码
 
-4. **Git 仓库处理**：
-   - Online: git clone {repo_url} ./repo
-   - Offline: cd ./repo && pip install --no-index --no-build-isolation -e .
-   - 或者 Online 阶段直接 pip wheel ./repo
+✔ Offline 阶段：
+- 只执行 pip install --no-index --find-links
+- 只消费 online 阶段生成的 wheel / 二进制文件
+- Python 路径必须显式指定
 
-5. **系统依赖**：
-   - Online 阶段：apt-get install 所有需要的系统包
-   - Offline 阶段：不要用 apt，假设所有依赖已安装
+如果你的方案无法与上述模式建立"结构等价关系"，
+必须返回 can_run=false。
 
-6. **环境变量**：
-   - 设置 PATH: export PATH=/root/tools/{tool_name}/miniforge3/bin:$PATH
-   - 设置 LD_LIBRARY_PATH（如果有动态库）
-   - 禁用网络检测：NO_PROXY=* HTTP_PROXY= HTTPS_PROXY=
+────────────────────────────────
+【必须执行的步骤（不可跳过）】
+────────────────────────────────
 
-7. **验证命令调整**：
-   - 原始：python -c 'import numpy'
-   - 调整：/root/tools/{tool_name}/miniforge3/bin/python -c 'import numpy'
-   - 或使用激活脚本：source {venv}/bin/activate && python -c 'import numpy'
+【Step 1】副作用拆解（必须输出）
+请先分析 Dockerfile，并列出一个"联网副作用清单"：
+- 来源（apt / pip / git / curl / wget / setup.py / pyproject.toml）
+- 对象（包名 / URL / repo）
+- 是否涉及 C/C++ 编译
+- 是否涉及 CPU 特性探测
+- 是否可能隐式联网
 
-8. **常见陷阱**：
-   - ❌ 不要在 offline 阶段使用 pip install {package} (会尝试联网)
-   - ❌ 不要在 offline 阶段使用 curl/wget/git
-   - ❌ 不要依赖 CPU 特性自动检测（会编译多个版本）
-   - ❌ 不要使用 pip install -e . 在 offline（可能触发编译）
-   - ✅ 使用 pip install --no-build-isolation 避免隔离环境下载
-   - ✅ 使用 --no-deps 避免自动解析依赖
-   - ✅ 明确指定所有依赖的版本
+如果你无法完整列出这些副作用 → can_run=false。
 
-【脚本模板建议】
+【Step 2】副作用物化映射
+针对 Step 1 中的每一条副作用：
+- 明确指出它将在 online 脚本中如何被"物化"
+  （例如：wheel 文件 / 源码 tarball / 二进制）
+- 明确指出 offline 阶段将如何消费该产物
 
-Online 脚本模板：
-```bash
-#!/bin/bash
-set -e  # 遇错即停
+【Step 3】脚本生成
+基于上述分析，生成两个脚本：
+- 00_fetch_and_build_online.sh
+- 01_build_offline.sh
 
-TOOL_DIR="/root/tools/{tool_name}"
-mkdir -p $TOOL_DIR
-cd $TOOL_DIR
+要求：
+- 每一条 offline 命令，都必须能在 online 阶段找到明确来源
+- offline 脚本中不得出现 online 脚本未生成的任何文件或依赖
 
-echo "[1/5] 安装 Miniforge3..."
-wget -q https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
-bash Miniforge3-Linux-x86_64.sh -b -p $TOOL_DIR/miniforge3
-export PATH="$TOOL_DIR/miniforge3/bin:$PATH"
+────────────────────────────────
+【验证命令改写（强制）】
+────────────────────────────────
+你必须改写 usage_entry_command：
+- 禁止使用 `python` / `python3`
+- 必须使用 offline 环境中的"确定性 Python 路径"
 
-echo "[2/5] 安装系统依赖..."
-apt-get update && apt-get install -y gcc g++ make
+示例：
+❌ python -c "import xxx"
+✅ /root/tools/{tool_name}/miniforge3/bin/python3 -c "import xxx"
 
-echo "[3/5] 下载 Python 包..."
-mkdir -p packages wheels
-pip download --dest packages numpy
-pip wheel --wheel-dir wheels --no-deps numpy
-
-echo "[4/5] 编译 C 扩展..."
-# 如果有 SIMD/AVX 需要禁用
-# SIMSIMD_TARGET_X86=0 pip wheel --wheel-dir wheels simsimd
-
-echo "[5/5] 验证产物..."
-ls -lh packages/ wheels/
-echo "Online 阶段完成"
-```
-
-Offline 脚本模板：
-```bash
-#!/bin/bash
-set -e
-
-TOOL_DIR="/root/tools/{tool_name}"
-cd $TOOL_DIR
-export PATH="$TOOL_DIR/miniforge3/bin:$PATH"
-
-echo "[1/3] 安装包（无网）..."
-pip install --no-index --find-links ./packages --find-links ./wheels numpy
-
-echo "[2/3] 验证安装..."
-python -c "import numpy; print(numpy.__version__)"
-
-echo "[3/3] 清理临时文件..."
-rm -rf packages/ wheels/
-echo "Offline 阶段完成"
-```
-
-输出 JSON 格式：
+────────────────────────────────
+【输出格式（严格 JSON，不允许多余文本）】
+────────────────────────────────
 {
-  "online_script": "完整的 bash 脚本内容（基于模板调整）",
-  "offline_script": "完整的 bash 脚本内容（基于模板调整）",
+  "side_effects": [
+    {
+      "source": "...",
+      "object": "...",
+      "needs_compile": true|false,
+      "needs_cpu_detect": true|false,
+      "may_access_network": true|false
+    }
+  ],
+  "online_script": "完整 online bash 脚本",
+  "offline_script": "完整 offline bash 脚本",
+  "rewritten_verify_command": "改写后的验证命令",
   "can_run": true|false,
-  "reason": "详细说明你的判断依据，如果是 false 必须指出具体问题"
+  "reason": "你的最终判断依据（工程级）"
 }"""
 
 
 def build_reviewer_system_prompt() -> str:
     """构建评审者的系统提示词"""
-    return """你是"离线构建脚本评审专家"。
+    return """你是「离线构建脚本评审专家（Offline Build Script Reviewer）」。
 
-任务：评审另一个 AI 生成的两个 shell 脚本（online + offline），判断是否能在无网环境成功运行。
+你的任务是：**判断这两个脚本是否真的能在"完全无网络环境"下成功运行**。
 
-评审要点：
-1. **检查硬性约束**（违反任何一条必须 can_run=false）：
-   ✓ Python 路径是否显式指定（不能用 python/python3，要用完整路径）
-   ✓ pip install 是否使用 --no-index + --find-links（offline阶段）
-   ✓ C/C++ 扩展是否在 online 阶段编译成 wheel
-   ✓ offline 阶段是否有联网操作（curl/wget/git/pip download）
-   ✓ offline 阶段是否触发编译器（gcc/g++/clang/cmake）
+────────────────────────────────
+【你的唯一判断标准】
+────────────────────────────────
+offline 阶段是否 **完全不依赖任何 online 阶段未显式生成的副作用**。
 
-2. **检查依赖完整性**：
-   ✓ online 阶段是否下载了所有依赖（包括传递依赖）
-   ✓ 是否遗漏了系统依赖（libssl/libffi等）
-   ✓ Python 包的版本是否指定
-   ✓ 是否有隐式的网络依赖（如 setup.py 中的下载）
+────────────────────────────────
+【评审步骤（必须逐条检查）】
+────────────────────────────────
 
-3. **检查路径和环境**：
-   ✓ online 和 offline 阶段的路径是否一致
-   ✓ 环境变量是否正确设置（PATH/LD_LIBRARY_PATH）
-   ✓ 工作目录是否正确（cd 到正确位置）
-   ✓ 验证命令的 Python 路径是否正确
+【Step 1】副作用覆盖检查
+- 对照 proposer 给出的 side_effects 清单
+- 检查 online_script 是否为每一项生成了明确的本地产物
+- 检查 offline_script 是否只使用这些产物
 
-4. **检查边界情况**：
-   ✓ SIMD/ISA/AVX 特性是否在 online 阶段禁用
-   ✓ 动态链接库是否在 online 阶段安装
-   ✓ 权限问题（是否需要 sudo）
-   ✓ 磁盘空间（是否清理临时文件）
+如果存在任何遗漏 → can_run=false。
 
-5. **检查常见错误**：
-   ✓ 是否使用了 pip install package（应该用 --no-index）
-   ✓ 是否使用了 pip install -e .（可能触发编译）
-   ✓ 是否遗漏了 --no-build-isolation
-   ✓ 是否假设了网络可用（DNS查询/证书验证）
-   ✓ 是否使用了系统 python（/usr/bin/python）
+【Step 2】offline 纯度检查
+offline_script 中 **禁止出现**：
+- apt / apt-get / yum / apk
+- pip install（未带 --no-index）
+- pip download / pip wheel
+- curl / wget / git
+- gcc / g++ / make / cmake
+- setup.py / pyproject.toml 触发构建
 
-6. **脚本质量检查**：
-   ✓ 是否有 set -e（遇错即停）
-   ✓ 是否有清晰的日志输出（echo 关键步骤）
-   ✓ 是否检查了关键文件是否存在
-   ✓ 是否有适当的错误处理
+出现任意一项 → can_run=false。
 
-输出 JSON 格式：
+【Step 3】Python 确定性检查
+- offline_script 中 python 路径是否显式
+- 是否误用了系统 python
+- rewritten_verify_command 是否使用了正确的 python
+
+【Step 4】隐式风险检查
+- setup.py 是否可能在 install 阶段联网
+- SIMD / ISA 是否在 online 阶段显式关闭
+- 是否存在动态库缺失风险
+
+────────────────────────────────
+【输出格式（严格 JSON，不允许多余文本）】
+────────────────────────────────
 {
   "can_run": true|false,
-  "suggestions": "详细的评审意见，如果 can_run=false 必须说明原因和改进建议",
-  "key_issues": ["问题1", "问题2"]  // 可选，列出关键问题
-}"""
+  "key_issues": [
+    "具体问题 1",
+    "具体问题 2"
+  ],
+  "suggestions": "如果 can_run=false，说明需要如何修改；如果 can_run=true，说明为什么可信"
+}
+
+注意：Reviewer 的角色不是"挑毛病"，
+而是 检查"副作用是否 100% 被覆盖和冻结"。"""
 
 
 def build_proposer_user_prompt(
@@ -264,7 +251,7 @@ def build_proposer_user_prompt(
     prompt_parts = [
         f"工具名称: {tool_name}",
         f"\nDockerfile 内容:\n```dockerfile\n{dockerfile}\n```",
-        f"\n验证命令: {usage_entry_command}",
+        f"\n原始验证命令: {usage_entry_command}",
     ]
     
     # 添加历史辩论记录
@@ -274,6 +261,14 @@ def build_proposer_user_prompt(
             prompt_parts.append(f"\n第 {round.round_index} 轮:")
             prompt_parts.append(f"- 提案者({round.proposer_name})认为 can_run={round.proposal.can_run}")
             prompt_parts.append(f"  理由: {round.proposal.reason}")
+            
+            # 显示副作用分析
+            if round.proposal.side_effects:
+                prompt_parts.append(f"  识别到的副作用:")
+                for effect in round.proposal.side_effects[:5]:  # 最多显示5个
+                    prompt_parts.append(f"    - {effect.source}: {effect.object}")
+            
+            prompt_parts.append(f"  改写后的验证命令: {round.proposal.rewritten_verify_command}")
             prompt_parts.append(f"- 评审者({round.reviewer_name})认为 can_run={round.review_can_run}")
             prompt_parts.append(f"  建议: {round.review_suggestions}")
     
@@ -284,7 +279,7 @@ def build_proposer_user_prompt(
             truncated = failure[-1000:] if len(failure) > 1000 else failure
             prompt_parts.append(f"\n失败 {i}:\n```\n{truncated}\n```")
     
-    prompt_parts.append("\n\n请基于以上信息生成或改进两个 shell 脚本。")
+    prompt_parts.append("\n\n请基于以上信息，按照 Step 1 → Step 2 → Step 3 的顺序分析并生成两个 shell 脚本。")
     
     return "".join(prompt_parts)
 
@@ -295,29 +290,41 @@ def build_reviewer_user_prompt(
     proposal: ScriptProposal,
 ) -> str:
     """构建评审者的用户提示词"""
+    side_effects_text = ""
+    if proposal.side_effects:
+        side_effects_text = "\n\n【提案者识别的副作用清单】\n"
+        for i, effect in enumerate(proposal.side_effects, 1):
+            side_effects_text += f"{i}. 来源: {effect.source}, 对象: {effect.object}\n"
+            side_effects_text += f"   - 需要编译: {effect.needs_compile}\n"
+            side_effects_text += f"   - CPU探测: {effect.needs_cpu_detect}\n"
+            side_effects_text += f"   - 可能联网: {effect.may_access_network}\n"
+    
     return f"""工具名称: {tool_name}
 
 原始 Dockerfile:
 ```dockerfile
 {dockerfile}
 ```
+{side_effects_text}
 
-提案者生成的脚本:
+【提案者生成的脚本】
 
-【online 脚本】
+online 脚本:
 ```bash
 {proposal.online_script}
 ```
 
-【offline 脚本】
+offline 脚本:
 ```bash
 {proposal.offline_script}
 ```
 
+改写后的验证命令: {proposal.rewritten_verify_command}
+
 提案者的判断: can_run={proposal.can_run}
 理由: {proposal.reason}
 
-请仔细评审这两个脚本，判断是否真的能在无网环境成功运行。"""
+请按照评审步骤（Step 1 → Step 2 → Step 3 → Step 4）逐条检查，判断是否真的能在无网环境成功运行。"""
 
 
 def debate_scripts(
@@ -375,23 +382,43 @@ def debate_scripts(
             print(f"[辩论] 提案者调用失败: {e}")
             # 返回失败提案
             proposal = ScriptProposal(
+                side_effects=[],
                 online_script="",
                 offline_script="",
+                rewritten_verify_command=usage_entry_command,
                 can_run=False,
                 reason=f"LLM调用失败: {e}",
                 model_name=proposer_name,
             )
             return proposal, history, False
         
+        # 解析副作用列表
+        side_effects = []
+        raw_effects = proposer_response.get("side_effects", [])
+        if isinstance(raw_effects, list):
+            for effect_dict in raw_effects:
+                if isinstance(effect_dict, dict):
+                    side_effects.append(SideEffect(
+                        source=effect_dict.get("source", ""),
+                        object=effect_dict.get("object", ""),
+                        needs_compile=bool(effect_dict.get("needs_compile", False)),
+                        needs_cpu_detect=bool(effect_dict.get("needs_cpu_detect", False)),
+                        may_access_network=bool(effect_dict.get("may_access_network", False)),
+                    ))
+        
         proposal = ScriptProposal(
+            side_effects=side_effects,
             online_script=proposer_response.get("online_script", ""),
             offline_script=proposer_response.get("offline_script", ""),
+            rewritten_verify_command=proposer_response.get("rewritten_verify_command", usage_entry_command),
             can_run=bool(proposer_response.get("can_run", False)),
             reason=proposer_response.get("reason", ""),
             model_name=proposer_name,
         )
         
         print(f"  提案者认为: can_run={proposal.can_run}")
+        print(f"  识别到 {len(proposal.side_effects)} 个副作用")
+        print(f"  改写后的验证命令: {proposal.rewritten_verify_command}")
         print(f"  理由: {proposal.reason[:100]}...")
         
         # Step 2: 评审者评审

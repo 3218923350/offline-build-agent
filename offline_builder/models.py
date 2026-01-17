@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -17,10 +17,22 @@ class ToolInput:
 
 
 @dataclass
+class SideEffect:
+    """联网副作用"""
+    source: str  # "apt" | "pip" | "git" | "curl" | "wget" | "setup.py"
+    object: str  # 包名 / URL / repo
+    needs_compile: bool  # 是否涉及 C/C++ 编译
+    needs_cpu_detect: bool  # 是否涉及 CPU 特性探测
+    may_access_network: bool  # 是否可能隐式联网
+
+
+@dataclass
 class ScriptProposal:
     """脚本提案"""
+    side_effects: List[SideEffect]
     online_script: str
     offline_script: str
+    rewritten_verify_command: str
     can_run: bool
     reason: str
     model_name: str = ""

@@ -14,6 +14,7 @@ from .models import (
     ExecutionResult,
     OfflineBuildSummary,
     ScriptProposal,
+    SideEffect,
     ToolInput,
 )
 from .builder import build_tool_offline
@@ -25,6 +26,7 @@ __all__ = [
     "ExecutionResult",
     "OfflineBuildSummary",
     "ScriptProposal",
+    "SideEffect",
     "ToolInput",
     "build_tool_offline",
     "debate_scripts",
