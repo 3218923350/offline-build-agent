@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from .builder import build_tool_offline
 from .models import ToolInput
+from dotenv import load_dotenv
 
 
 def load_tools_from_json(json_path: Path) -> List[ToolInput]:
@@ -111,6 +112,7 @@ def generate_final_report(output_dir: Path):
 
 
 def main(argv: Optional[List[str]] = None):
+    load_dotenv()
     parser = argparse.ArgumentParser(
         description="离线构建 Agent - 将 Docker 工具转换为无网环境可编译的脚本"
     )
